@@ -1,0 +1,93 @@
+Cria-me 2 views para a base de dados enviada em anexo.
+Uma com obrigatoreamente pelo menos um group by e outro com obrigatoreamente pelo menos 1 select encadeado e que considere relevante, justificando a sua relevância. A relevância e o grau de complexidade das mesmas influenciarão fortemente a sua avaliação.
+Uma das views pode ser por exemplo: as 5 maquinas que geraram mais receita nos ultimos 3 meses, bem como a categoria do produto dessas 5 maquinas que mais vendeu de forma a ter as localizacoes que mais geram receitas (relevante para no futuro meter mais maquinas nessa zona) e de forma a ter o tipo de produtos que mais foi vendido (relevante para no futuro meter mais desse tipo de produtos nas maquinas)
+
+
+1a view (com pelo menos um group by): Select das cinco máquinas que geraram maior receita nos últimos três meses, bem como a categoria de produto mais vendida nessas mesmas máquinas. O objetivo é identificar as localizações que apresentaram maior rentabilidade, permitindo uma melhor estratégia de distribuição de novas máquinas no futuro (implementar mais máquinas nessa localizacao de forma a lucrar mais), e determinar a categoria de produtos com maior procura, de forma a otimizar o seu abastecimento e por consequente a sua venda (implementar categorias de produtos mais lucrativos nas máquinas de forma a lucrar mais), sendo relevante para no futuro lucrar mais com as localizações estudadas, bem como as categorias de produto estudadas.
+
+
+CREATE VIEW VIEW_J_2023146226 AS 
+SELECT
+
+
+CREATE OR REPLACE VIEW top_maquinas_categoria AS
+SELECT 
+    v.id_maquina,
+    m.cidade,
+    m.local,
+    SUM(v.valor_venda) AS total_receita,
+    (SELECT p.categoria 
+     FROM vendas v2
+     JOIN produto p ON v2.id_produto = p.id_produto
+     WHERE v2.id_maquina = v.id_maquina
+     GROUP BY p.categoria
+     ORDER BY SUM(v2.valor_venda) DESC
+     FETCH FIRST 1 ROW ONLY) AS categoria_mais_vendida
+FROM vendas v
+JOIN compartimento c ON v.id_compartimento = c.id_compartimento
+JOIN maquina m ON c.id_maquina = m.id_maquina
+WHERE v.data_hora >= ADD_MONTHS(SYSDATE, -3)
+GROUP BY v.id_maquina, m.cidade, m.local
+ORDER BY total_receita DESC
+FETCH FIRST 5 ROWS ONLY;
+
+
+
+------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/
+
+
+2a view (com pelo menos um select encadeado): Select que permite identificar quais os armazéns que precisam de reabastecimento urgente (e de que produto), reabastecimento recomendado, e reabastecimento suficiente, comparando o stock atual com a quantidade prevista e a taxa de vendas recente. Ajuda na otimização logística, reduzindo desperdícios e melhorando a distribuição dos produtos. É relevante para gerir ao pormenor o stock dos produtos armazenados nos armazéns.
+
+Explicação da Query:
+Subquery vendas_rec: Calcula a quantidade vendida nos últimos 30 dias.
+Subquery estoque_atual: Obtém o estoque atual de cada produto no armazém.
+Subquery reabastecimentos_rec: Obtém a média de reabastecimento por produto.
+Query principal:
+Junta as três subqueries para comparar estoque vs. vendas.
+Cria um indicador de reabastecimento:
+"Reabastecimento Urgente" → Se o estoque for inferior a 120% das vendas mensais.
+"Reabastecimento Recomendado" → Se for inferior a 150%.
+"Estoque Suficiente" → Caso contrário.
+
+Benefícios e Desafios:
+✅ Alta complexidade: Subqueries encadeadas, agregações e comparações dinâmicas.
+✅ Alta relevância: Otimiza a gestão de inventário e reduz faltas de stock.
+✅ Escalabilidade: Pode ser adaptada para incluir sazonalidade ou previsão estatística.
+
+
+CREATE VIEW VIEW_K_2023146226 AS 
+SELECT
+
+
+CREATE OR REPLACE VIEW v_previsao_reabastecimento AS
+SELECT 
+    pa.id_armazem, 
+    pa.id_produto, 
+    pa.stock_armazem, 
+    (SELECT SUM(quantidade_vendida) 
+     FROM prev_reab_armazem 
+     WHERE id_armazem = pa.id_armazem 
+       AND id_produto = pa.id_produto 
+       AND data_prevista >= SYSDATE - 30) AS total_vendido_30d,
+    (SELECT AVG(quantidade_reposta) 
+     FROM reabastecimento_armazem 
+     WHERE id_armazem = pa.id_armazem 
+       AND id_produto = pa.id_produto) AS media_reabastecimento,
+    CASE 
+        WHEN pa.stock_armazem < 
+             NVL((SELECT SUM(quantidade_vendida) 
+                  FROM prev_reab_armazem 
+                  WHERE id_armazem = pa.id_armazem 
+                    AND id_produto = pa.id_produto 
+                    AND data_prevista >= SYSDATE - 30) * 1.2, 0) 
+        THEN 'Reabastecimento Urgente'
+        WHEN pa.stock_armazem < 
+             NVL((SELECT SUM(quantidade_vendida) 
+                  FROM prev_reab_armazem 
+                  WHERE id_armazem = pa.id_armazem 
+                    AND id_produto = pa.id_produto 
+                    AND data_prevista >= SYSDATE - 30) * 1.5, 0) 
+        THEN 'Reabastecimento Recomendado'
+        ELSE 'Stock Suficiente'
+    END AS status_reabastecimento
+FROM produto_armazem pa;

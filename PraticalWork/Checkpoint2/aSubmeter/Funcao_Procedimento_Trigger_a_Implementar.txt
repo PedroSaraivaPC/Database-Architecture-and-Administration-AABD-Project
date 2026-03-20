@@ -1,0 +1,11 @@
+P_FUNC_2023146226 -> 
+Objetivo: Funcao que retorne o número de referência/id_produto que mais foi reabastecido na máquina mais perto de um certo ponto de referência e num certo intervalo de tempo. A função recebe 4 parametros, tais como: a latitude e longitude do ponto de referência, e a data inicio e data fim do intervalo de tempo.
+Relevância: Muito útil para análise logística e otimização de stock — permite perceber quais produtos têm maior rotatividade em zonas específicas, ajudando a ajustar reabastecimentos futuros.
+
+Q_PROC_2023146226 -> 
+Objetivo: Procedimento que recebe por pârametro uma categoria/tipo de produtos e a percentagem do aumento. O procedimento calcula a média dos preços dos produtos da categoria passada por parâmetro e caso o preço individual de cada produto dessa categoria for inferior ao valor da média, o preço individual sofre um aumento da percentagem passada por parâmetro. Se obedecer à condição anterior os produtos que tenham o preço mais baixo são os primeiros a ser alterados.
+Relevância: Muito relevante para gestão dinâmica de preços. Garante que produtos com valor desajustado ao mercado sejam ajustados de forma estratégica, podendo melhorar margens de lucro e equilíbrio de preços dentro de uma categoria.
+
+R_TRIG_2023146226 -> 
+Objetivo: Trigger que sempre que haja um reabastecimento à maquina (a cada compartimento) vê se a quantidade que está a ser reposta no compartimento + a quantidade existente excedem a capacidade máxima desse compartimento. Se exceder, não deixa fazer o o reabastecimento com aquela quantidade.
+Relevância: Altamente relevante em termos de validação de dados e segurança da base de dados. Previne erros operacionais que poderiam causar inconsistência nos registos ou problemas físicos/logísticos nas máquinas.

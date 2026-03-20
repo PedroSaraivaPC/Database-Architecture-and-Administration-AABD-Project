@@ -1,0 +1,900 @@
+SET SERVEROUTPUT ON;
+
+CREATE OR REPLACE FUNCTION QUANTIDE_VENDIDA(IDMAQUINA NUMBER, IDPRODUTO NUMBER, DATA_INICIO DATE, DATA_FIM DATE)
+RETURN NUMBER
+IS
+    DATA_FIM_MESMO DATE;
+    QUANT_VENDIDA NUMBER;
+    
+    CONT_MAQUINA NUMBER; CONT_PRODUTO NUMBER;
+    MAQUINA_NAO_EXISTE EXCEPTION;
+    PRODUTO_NAO_EXISTE EXCEPTION;
+    DATA_E_IMPOSSIVEL EXCEPTION;
+BEGIN
+    DATA_FIM_MESMO := NVL(DATA_FIM, SYSDATE);
+    
+    SELECT COUNT(*) INTO CONT_MAQUINA FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA;
+    IF(CONT_MAQUINA=0) THEN
+        RAISE MAQUINA_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONT_PRODUTO FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONT_PRODUTO=0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+    
+    IF(DATA_FIM_MESMO < DATA_INICIO) THEN
+        RAISE DATA_E_IMPOSSIVEL;
+    END IF;    
+    
+    SELECT COUNT(*) INTO QUANT_VENDIDA
+    FROM VENDAS V, COMPARTIMENTO C
+    WHERE V.ID_PRODUTO = IDPRODUTO 
+    AND C.ID_MAQUINA = IDMAQUINA
+    AND V.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+    AND V.DATA_HORA BETWEEN DATA_INICIO AND DATA_FIM_MESMO; 
+    
+    RETURN QUANT_VENDIDA;
+
+EXCEPTION
+    WHEN MAQUINA_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20801, 'Codigo de máquina inexistente.');
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente.');
+    WHEN DATA_E_IMPOSSIVEL THEN
+        RAISE_APPLICATION_ERROR(-20809, 'Inválido intervalo temporal.');
+END;
+/
+
+
+CREATE OR REPLACE FUNCTION QUANTIDADE_EM_FALTA (IDMAQUINA NUMBER, IDPRODUTO NUMBER)
+RETURN NUMBER
+IS
+    STOCK_ATUAL NUMBER;
+    JA_DEFINIDO NUMBER;
+    DIFERENCA NUMBER;
+    
+    CONT_MAQUINA NUMBER; CONT_PRODUTO NUMBER;
+    MAQUINA_NAO_EXISTE EXCEPTION;
+    PRODUTO_NAO_EXISTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONT_MAQUINA FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA;
+    IF(CONT_MAQUINA=0) THEN
+        RAISE MAQUINA_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONT_PRODUTO FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONT_PRODUTO=0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+
+    SELECT STOCK, CAPAC_MAX INTO STOCK_ATUAL, JA_DEFINIDO 
+    FROM COMPARTIMENTO 
+    WHERE ID_MAQUINA = IDMAQUINA AND ID_PRODUTO = IDPRODUTO;
+    
+    DIFERENCA := GREATEST(JA_DEFINIDO - STOCK_ATUAL,0); -- PARA DAR SEMPRE 0, CASO DÊ UM NUMERO NEGATIVO
+    RETURN DIFERENCA;
+EXCEPTION
+    WHEN MAQUINA_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20801, 'Código de máquina inexistente.');
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente.');
+END;
+/
+
+
+CREATE OR REPLACE FUNCTION QUANTIDADE_MEDIA_DIARIA (IDMAQUINA NUMBER, IDPRODUTO NUMBER) 
+RETURN NUMBER
+IS
+    CURSOR C1 IS SELECT COUNT(V.ID_VENDA) AS QUANTIDADE_DIARIA_VENDIDA, TO_CHAR(V.DATA_HORA, 'YYYY-MM-DD') AS DIA
+                 FROM VENDAS V, COMPARTIMENTO C
+                 WHERE V.ID_PRODUTO = IDPRODUTO
+                 AND C.ID_MAQUINA = IDMAQUINA
+                 AND V.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+                 AND V.DATA_HORA > ( SELECT DATA_HORA 
+                                     FROM (  SELECT DATA_HORA 
+                                             FROM ( SELECT RC.DATA_HORA 
+                                                     FROM REABASTECIMENTO_COMPARTIMENTO RC, COMPARTIMENTO C
+                                                     WHERE RC.ID_PRODUTO = 33
+                                                     AND C.ID_MAQUINA = 1
+                                                     AND RC.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+                                                     ORDER BY 1 DESC)
+                                             WHERE ROWNUM<=2
+                                             ORDER BY 1 ASC)
+                                     WHERE ROWNUM = 1)
+                 GROUP BY TO_CHAR(V.DATA_HORA, 'YYYY-MM-DD');       
+    CONTAGEM NUMBER := 0;
+    SOMA NUMBER := 0;
+    MEDIA NUMBER;
+
+    CONT_MAQUINA NUMBER; CONT_PRODUTO NUMBER;
+    MAQUINA_NAO_EXISTE EXCEPTION;
+    PRODUTO_NAO_EXISTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONT_MAQUINA FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA;
+    IF(CONT_MAQUINA=0) THEN
+        RAISE MAQUINA_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONT_PRODUTO FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONT_PRODUTO=0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+
+    FOR R IN C1 LOOP
+        CONTAGEM := CONTAGEM + 1;
+        SOMA := SOMA + R.QUANTIDADE_DIARIA_VENDIDA;
+    END LOOP;
+    
+    -- Evitar divisão por zero
+    IF CONTAGEM > 0 THEN
+        MEDIA := SOMA / CONTAGEM;
+    ELSE
+        MEDIA := 0;
+    END IF;
+   
+    RETURN MEDIA;
+
+EXCEPTION
+    WHEN MAQUINA_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20801, 'Código de máquina inexistente.');
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente.');
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION DATA_ULTIMO_ABASTEC (IDMAQUINA NUMBER, IDPRODUTO NUMBER) 
+RETURN DATE
+IS
+    DATA_FINAL DATE;
+    
+    CONT_MAQUINA NUMBER; CONT_PRODUTO NUMBER;
+    MAQUINA_NAO_EXISTE EXCEPTION;
+    PRODUTO_NAO_EXISTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONT_MAQUINA FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA;
+    IF(CONT_MAQUINA=0) THEN
+        RAISE MAQUINA_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONT_PRODUTO FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONT_PRODUTO=0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+
+    SELECT MAX(RC.DATA_HORA) INTO DATA_FINAL
+    FROM REABASTECIMENTO_COMPARTIMENTO RC, COMPARTIMENTO C
+    WHERE RC.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+    AND C.ID_MAQUINA = IDMAQUINA
+    AND RC.ID_PRODUTO = IDPRODUTO;
+    
+    IF (DATA_FINAL IS NULL) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+    
+    RETURN DATA_FINAL;
+EXCEPTION
+    WHEN MAQUINA_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20801, 'Código de máquina inexistente.');
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente.');
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION DISTANCIA_ENTRE_MAQUINAS (IDMAQUINA1 NUMBER, IDMAQUINA2 NUMBER)
+RETURN NUMBER
+IS
+    LAT1 NUMBER; LAT2 NUMBER;
+    LON1 NUMBER; LON2 NUMBER;
+    DISTANCIA_ENTRE_MAQUINAS NUMBER;
+
+    CONT_MAQUINA1 NUMBER; CONT_MAQUINA2 NUMBER;
+    MAQUINA1_NAO_EXISTE EXCEPTION;
+    MAQUINA2_NAO_EXISTE EXCEPTION;
+    MAQUINAS_INAVALIDAS EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONT_MAQUINA1 FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA1;
+    IF(CONT_MAQUINA1=0) THEN
+        RAISE MAQUINA1_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONT_MAQUINA2 FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA2;
+    IF(CONT_MAQUINA2=0) THEN
+        RAISE MAQUINA2_NAO_EXISTE;
+    END IF;
+    
+    IF(IDMAQUINA1 = IDMAQUINA2) THEN
+        RAISE MAQUINAS_INAVALIDAS;
+    END IF;
+    
+    SELECT LATITUDE, LONGITUDE INTO LAT1, LON1 FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA1;
+    SELECT LATITUDE, LONGITUDE INTO LAT2, LON2 FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA2;
+    
+    DISTANCIA_ENTRE_MAQUINAS := DISTANCIA_LINEAR(LAT1, LON1, LAT2, LON2);
+    
+    RETURN DISTANCIA_ENTRE_MAQUINAS;
+EXCEPTION
+    WHEN MAQUINA1_NAO_EXISTE OR MAQUINA2_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20801, 'Código de máquina inexistente.');
+    WHEN MAQUINAS_INAVALIDAS THEN
+        RAISE_APPLICATION_ERROR(-20810, 'Máquinas inválidas. Devem ser diferentes.');
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION DISTANCIA_VIAGEM (IDVIAGEM NUMBER)
+RETURN NUMBER
+IS
+    CURSOR C1 IS SELECT C.ID_MAQUINA, R.ID_ARMAZEM, C.ORDEM_MAQUINA
+                 FROM CONTEM C, ROTA R, VIAGEM V, VISITA_MAQUINA VM, REABASTECIMENTO_COMPARTIMENTO RC
+                 WHERE V.ID_VIAGEM = IDVIAGEM
+                 AND VM.ID_VIAGEM = V.ID_VIAGEM
+                 AND RC.ID_VISITA_MAQUINA = VM.ID_VISITA_MAQUINA
+                 AND V.ID_ROTA = R.ID_ROTA
+                 AND C.ID_ROTA = R.ID_ROTA
+                 ORDER BY C.ORDEM_MAQUINA ASC;
+    LAT1 NUMBER; LON1 NUMBER;
+    LAT_ANTIGA NUMBER; LON_ANTIGA NUMBER;
+    LAT_INICIAL NUMBER; LON_INICIAL NUMBER;
+    DISTANCIA_FINAL NUMBER := 0;
+    CONTAGEM NUMBER;
+    
+    VIAGEM_INEXISTENTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONTAGEM FROM VIAGEM WHERE ID_VIAGEM = IDVIAGEM;
+    IF(CONTAGEM = 0) THEN
+        RAISE VIAGEM_INEXISTENTE;
+    END IF;
+    FOR R IN C1 LOOP
+        IF(R.ORDEM_MAQUINA = 1) THEN
+            SELECT LATITUDE, LONGITUDE INTO LAT1, LON1 FROM MAQUINA WHERE ID_MAQUINA = R.ID_MAQUINA;
+            SELECT LATITUDE, LONGITUDE INTO LAT_INICIAL, LON_INICIAL FROM ARMAZEM WHERE ID_ARMAZEM = R.ID_ARMAZEM;
+            
+            DISTANCIA_FINAL := DISTANCIA_FINAL + DISTANCIA_LINEAR(LAT_INICIAL, LON_INICIAL, LAT1, LON1);
+            
+            LAT_ANTIGA := LAT1;
+            LON_ANTIGA := LON1;
+        ELSE
+            SELECT LATITUDE, LONGITUDE INTO LAT1, LON1 FROM MAQUINA WHERE ID_MAQUINA = R.ID_MAQUINA;
+            
+            DISTANCIA_FINAL := DISTANCIA_FINAL + DISTANCIA_LINEAR(LAT_ANTIGA, LON_ANTIGA, LAT1, LON1);
+            
+            LAT_ANTIGA := LAT1;
+            LON_ANTIGA := LON1;
+        END IF;
+    END LOOP;
+    
+    DISTANCIA_FINAL := DISTANCIA_FINAL + DISTANCIA_LINEAR(LAT_ANTIGA, LON_ANTIGA, LAT_INICIAL, LON_INICIAL);
+    
+    RETURN DISTANCIA_FINAL;
+EXCEPTION
+    WHEN VIAGEM_INEXISTENTE THEN
+        RAISE_APPLICATION_ERROR(-20807,'Viagem de abastecimento inexistente.');
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION MAQUINA_MAIS_PROXIMA (IDPRODUTO NUMBER, LAT NUMBER, LON NUMBER)
+RETURN NUMBER
+IS
+    CURSOR C1 IS SELECT M.ID_MAQUINA, M.LATITUDE, M.LONGITUDE 
+                 FROM COMPARTIMENTO C, MAQUINA M 
+                 WHERE C.ID_PRODUTO = IDPRODUTO 
+                 AND M.ID_MAQUINA = C.ID_MAQUINA
+                 AND LOWER(M.ESTADO_ATUAL) = 'operacional'
+                 AND C.STOCK > 0;
+    DISTANCIA_FINAL NUMBER := 0;
+    DISTANCIA_MIN NUMBER := 999999999999999999999999;
+    ID_MAQ NUMBER;
+    CONTAGEM NUMBER;
+    
+    PRODUTO_NAO_EXISTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONTAGEM FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONTAGEM = 0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+    
+    FOR R IN C1 LOOP
+        DISTANCIA_FINAL := DISTANCIA_LINEAR(LAT, LON, R.LATITUDE, R.LONGITUDE);
+        IF(DISTANCIA_FINAL < DISTANCIA_MIN) THEN
+            DISTANCIA_MIN := DISTANCIA_FINAL;
+            ID_MAQ := R.ID_MAQUINA;
+        END IF;
+    END LOOP;
+    
+    IF ID_MAQ IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20857, 'Nenhuma máquina operacional com stock foi encontrada.');
+    END IF;
+    
+    RETURN ID_MAQ;
+EXCEPTION
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802,'Código de produto inexistente');
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION PROX_MAQUINA_SEM_PRODUTO (IDPRODUTO NUMBER, IDMAQUINA NUMBER)
+RETURN NUMBER
+IS
+    CURSOR C1 IS SELECT M.ID_MAQUINA, M.LATITUDE, M.LONGITUDE
+                 FROM MAQUINA M, COMPARTIMENTO C
+                 WHERE C.ID_MAQUINA = M.ID_MAQUINA
+                 AND C.ID_PRODUTO = IDPRODUTO
+                 AND LOWER(M.ESTADO_ATUAL) = 'operacional'
+                 AND C.STOCK = 0
+                 AND M.ID_MAQUINA <> IDMAQUINA; -- para nao ler a que está a ser passada por parametro
+    LAT1 NUMBER; LON1 NUMBER;
+    DISTANCIA_MINIMA NUMBER := 999999999999999999999999999999999999999999999999999;
+    DISTANCIA NUMBER;
+    ID_MAQ NUMBER;
+    
+    CONT_PRODUTO NUMBER;
+    PRODUTO_NAO_EXISTE EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONT_PRODUTO FROM PRODUTO WHERE ID_PRODUTO = IDPRODUTO;
+    IF(CONT_PRODUTO = 0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+    
+    SELECT LATITUDE, LONGITUDE INTO LAT1, LON1 FROM MAQUINA WHERE ID_MAQUINA = IDMAQUINA;
+    FOR R IN C1 LOOP
+        DISTANCIA := DISTANCIA_LINEAR(LAT1, LON1, R.LATITUDE, R.LONGITUDE);
+        IF(DISTANCIA < DISTANCIA_MINIMA) THEN
+            DISTANCIA_MINIMA := DISTANCIA;
+            ID_MAQ := R.ID_MAQUINA;
+        END IF;
+    END LOOP;
+    
+    RETURN ID_MAQ;
+EXCEPTION
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente');
+END;
+/
+
+
+CREATE SEQUENCE SEQ_ROTA START WITH 16;
+CREATE SEQUENCE SEQ_VIAGEM START WITH 47;
+
+CREATE OR REPLACE PROCEDURE CRIA_VIAGEM_ABAST (COD_ARMAZEM NUMBER, RAIO NUMBER)
+IS
+    CURSOR C1 IS SELECT * 
+                 FROM ( SELECT M.ID_MAQUINA
+                        FROM MAQUINA M, COMPARTIMENTO C, ARMAZEM A
+                        WHERE C.ID_MAQUINA = M.ID_MAQUINA
+                        AND A.ID_ARMAZEM = COD_ARMAZEM
+                        AND C.STOCK >= 0
+                        AND DISTANCIA_LINEAR(M.LATITUDE, M.LONGITUDE, A.LATITUDE, A.LONGITUDE) <= RAIO
+                        GROUP BY M.ID_MAQUINA
+                        ORDER BY SUM(C.STOCK) ASC) 
+                 WHERE ROWNUM <= 10; -- 10 maquinas com menos stock (no total de todos os compartimentos)
+    ORDEM NUMBER := 1;
+    IDROTA NUMBER;
+    IDVIAGEM NUMBER;
+    
+    CONTAGEM NUMBER;
+    ARMAZEM_NAO_EXISTE EXCEPTION;
+    RAIO_ERRADO EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONTAGEM FROM ARMAZEM WHERE ID_ARMAZEM = COD_ARMAZEM;
+    IF(CONTAGEM = 0) THEN
+        RAISE ARMAZEM_NAO_EXISTE;
+    END IF;
+    
+    IF(RAIO < 0) THEN
+        RAISE RAIO_ERRADO;
+    END IF;
+    
+    SELECT SEQ_ROTA.NEXTVAL INTO IDROTA FROM DUAL;
+    INSERT INTO ROTA VALUES(IDROTA, COD_ARMAZEM, 'nao predefinido', '10 maquinas com maior rutura de stock', 500);
+    
+    SELECT SEQ_VIAGEM.NEXTVAL INTO IDVIAGEM FROM DUAL;
+    INSERT INTO VIAGEM VALUES(IDVIAGEM, 1, IDROTA, 1, 500, SYSDATE, NULL);
+        
+    FOR R IN C1 LOOP
+        INSERT INTO CONTEM VALUES(R.ID_MAQUINA, IDROTA, ORDEM);
+        ORDEM := ORDEM +1;        
+    END LOOP;
+EXCEPTION 
+    WHEN ARMAZEM_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20806, 'Código de armazém inexistente.');
+    WHEN RAIO_ERRADO THEN
+        RAISE_APPLICATION_ERROR(-20811, 'Distância Inválida.');
+END;
+/
+
+
+
+CREATE SEQUENCE SEQ_RA START WITH 1001;
+CREATE OR REPLACE PROCEDURE ENCOMENDA_PRODUTOS (COD_ARMAZEM NUMBER, DATAINICIO DATE)
+IS
+    CURSOR C1 IS SELECT COUNT(V.ID_VENDA) AS QUANTIDADE_VENDIDA, C.ID_PRODUTO, C.ID_COMPARTIMENTO
+                 FROM VENDAS V, COMPARTIMENTO C
+                 WHERE V.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+                 AND V.DATA_HORA > DATAINICIO
+                 GROUP BY C.ID_PRODUTO, C.ID_COMPARTIMENTO;
+    QUANTIDADE_EXISTENTE NUMBER;
+    QUANT_STOCK_ARMAZEM NUMBER;
+    VALOR_A_ENCOMENDAR NUMBER;
+    ID_RA NUMBER;
+    
+    CONTAGEM NUMBER;
+    ARMAZEM_NAO_EXISTE EXCEPTION;
+    DATA_INVALIDA EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONTAGEM FROM ARMAZEM WHERE ID_ARMAZEM = COD_ARMAZEM;
+    IF(CONTAGEM = 0) THEN
+        RAISE ARMAZEM_NAO_EXISTE;
+    END IF;
+    
+    IF(DATAINICIO >= SYSDATE) THEN
+        RAISE DATA_INVALIDA;
+    END IF;
+    
+    FOR R IN C1 LOOP
+        SELECT SUM(STOCK) INTO QUANTIDADE_EXISTENTE FROM COMPARTIMENTO WHERE ID_COMPARTIMENTO = R.ID_COMPARTIMENTO;
+        BEGIN
+            SELECT QUANTIDADE_ATUAL INTO QUANT_STOCK_ARMAZEM 
+            FROM ARMAZENADO 
+            WHERE ID_PRODUTO = R.ID_PRODUTO AND ID_ARMAZEM = COD_ARMAZEM;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN
+                QUANT_STOCK_ARMAZEM := 0;
+        END;
+        
+        VALOR_A_ENCOMENDAR := R.QUANTIDADE_VENDIDA - QUANTIDADE_EXISTENTE - QUANT_STOCK_ARMAZEM;
+        
+        IF(VALOR_A_ENCOMENDAR > 0) THEN
+            UPDATE ARMAZENADO SET QUANTIDADE_PREVISTA = VALOR_A_ENCOMENDAR, DATA_PROX_PREVISAO = SYSDATE+7 WHERE ID_PRODUTO = R.ID_PRODUTO AND ID_ARMAZEM = COD_ARMAZEM;
+            IF SQL%ROWCOUNT = 0 THEN
+                INSERT INTO ARMAZENADO (ID_PRODUTO, ID_ARMAZEM, QUANTIDADE_ATUAL, QUANTIDADE_PREVISTA, DATA_PROX_PREVISAO)
+                VALUES (R.ID_PRODUTO, COD_ARMAZEM, 0, VALOR_A_ENCOMENDAR, SYSDATE+7);
+            END IF;
+            
+            SELECT SEQ_RA.NEXTVAL INTO ID_RA FROM DUAL;
+            INSERT INTO REABASTECIMENTO_ARMAZEM VALUES(ID_RA, COD_ARMAZEM, R.ID_PRODUTO, VALOR_A_ENCOMENDAR, SYSDATE+7);
+        END IF;
+    END LOOP;
+EXCEPTION
+    WHEN ARMAZEM_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20806, 'Código de armazém inexistente.');
+    WHEN DATA_INVALIDA THEN
+        RAISE_APPLICATION_ERROR(-20812, 'Data inválida. Deve ser anterior à data atual.');
+END;
+/
+
+
+CREATE SEQUENCE SEQ_VM START WITH 229;
+CREATE SEQUENCE SEQ_RC START WITH 176;
+CREATE OR REPLACE PROCEDURE ABASTECE_PRODUTO (COD_ARMAZEM NUMBER, COD_PRODUTO NUMBER, QUANTIDADE NUMBER)
+IS
+    CURSOR C1 IS SELECT C.ID_MAQUINA
+                 FROM COMPARTIMENTO C 
+                 WHERE C.ID_PRODUTO = COD_PRODUTO
+                 ORDER BY C.STOCK ASC;
+    ID_ROTA NUMBER;
+    ID_VIAGEM NUMBER;
+    ID_VM NUMBER;
+    ID_RC NUMBER;
+    ID_C NUMBER;
+    
+    QUANT_STOCK_C NUMBER;
+    QUANT_MAX NUMBER;
+    QUANT_A_MUDAR NUMBER;
+    
+    CONTAGEM_P NUMBER;
+    CONTAGEM_A NUMBER;
+    
+    PRODUTO_NAO_EXISTE EXCEPTION;
+    ARMAZEM_NAO_EXISTE EXCEPTION;
+    QUANT_INVALIDA EXCEPTION;
+BEGIN
+    SELECT COUNT(*) INTO CONTAGEM_P FROM PRODUTO WHERE ID_PRODUTO = COD_PRODUTO;
+    IF(CONTAGEM_P = 0) THEN
+        RAISE PRODUTO_NAO_EXISTE;
+    END IF;
+    
+    SELECT COUNT(*) INTO CONTAGEM_A FROM ARMAZEM WHERE ID_ARMAZEM = COD_ARMAZEM;
+    IF(CONTAGEM_A = 0) THEN
+        RAISE ARMAZEM_NAO_EXISTE;
+    END IF;
+    
+    IF(QUANTIDADE < 0) THEN
+        RAISE QUANT_INVALIDA;
+    END IF;
+    
+    QUANT_A_MUDAR := QUANTIDADE;
+
+    SELECT SEQ_ROTA.NEXTVAL, SEQ_VIAGEM.NEXTVAL INTO ID_ROTA, ID_VIAGEM FROM DUAL;
+    INSERT INTO ROTA VALUES(ID_ROTA, COD_ARMAZEM, 'nao predefinido', 'Maquinas com muita rotura de stock.', 15);
+    INSERT INTO VIAGEM VALUES(ID_VIAGEM, 1, ID_ROTA, 1, 15, SYSDATE, NULL);
+    
+    FOR R IN C1 LOOP
+        IF(QUANT_A_MUDAR > 0) THEN -- SE AINDA HOUVER QUANTIDADE PARA REPOR
+            SELECT SEQ_VM.NEXTVAL INTO ID_VM FROM DUAL;
+            INSERT INTO VISITA_MAQUINA VALUES(ID_VM, R.ID_MAQUINA, ID_VIAGEM, SYSDATE);
+            
+            SELECT ID_COMPARTIMENTO, STOCK, CAPAC_MAX INTO ID_C, QUANT_STOCK_C, QUANT_MAX
+            FROM COMPARTIMENTO 
+            WHERE ID_PRODUTO = COD_PRODUTO AND ID_MAQUINA = R.ID_MAQUINA;
+            
+            IF (QUANT_A_MUDAR <= QUANT_MAX-QUANT_STOCK_C) THEN -- mete apenas a quant disponivel na carrinha, mesmo que o compartimento nao fique full
+                SELECT SEQ_RC.NEXTVAL INTO ID_RC FROM DUAL;
+                INSERT INTO REABASTECIMENTO_COMPARTIMENTO VALUES(ID_RC, ID_VM, ID_C, COD_PRODUTO, QUANT_A_MUDAR, SYSDATE);
+                
+                QUANT_A_MUDAR := QUANT_A_MUDAR - QUANT_A_MUDAR;
+            ELSE                                               -- mete toda a quantidade disponivel no compartimento
+                SELECT SEQ_RC.NEXTVAL INTO ID_RC FROM DUAL;
+                INSERT INTO REABASTECIMENTO_COMPARTIMENTO VALUES(ID_RC, ID_VM, ID_C, COD_PRODUTO, QUANT_MAX-QUANT_STOCK_C, SYSDATE);
+                
+                QUANT_A_MUDAR := QUANT_A_MUDAR - (QUANT_MAX-QUANT_STOCK_C);
+            END IF;
+        END IF;
+        
+        EXIT WHEN QUANT_A_MUDAR <= 0;
+    END LOOP;
+EXCEPTION
+    WHEN PRODUTO_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20802, 'Código de produto inexistente.');
+    WHEN ARMAZEM_NAO_EXISTE THEN
+        RAISE_APPLICATION_ERROR(-20806, 'Código de armazém inexistente.');
+    WHEN QUANT_INVALIDA THEN
+        RAISE_APPLICATION_ERROR(-20813, 'Quantidade inválida.');
+END;
+/
+
+
+
+
+CREATE OR REPLACE TRIGGER UPDATE_STOCK
+BEFORE INSERT
+ON VENDAS
+FOR EACH ROW
+DECLARE 
+    QUANT_NO_COMPARTIMENTO NUMBER;
+    IDMAQUINA NUMBER;
+    QUANTIDADE NUMBER;
+    
+    SEM_STOCK_PARA_VENDER EXCEPTION;
+BEGIN
+    SELECT STOCK INTO QUANT_NO_COMPARTIMENTO FROM COMPARTIMENTO WHERE ID_COMPARTIMENTO = :NEW.ID_COMPARTIMENTO AND ID_PRODUTO = :NEW.ID_PRODUTO;
+    IF(QUANT_NO_COMPARTIMENTO = 0) THEN
+        RAISE SEM_STOCK_PARA_VENDER;
+    END IF;
+    
+    UPDATE COMPARTIMENTO SET STOCK = STOCK - 1 WHERE ID_COMPARTIMENTO = :NEW.ID_COMPARTIMENTO AND ID_PRODUTO = :NEW.ID_PRODUTO;
+    
+    SELECT ID_MAQUINA INTO IDMAQUINA FROM COMPARTIMENTO WHERE ID_COMPARTIMENTO = :NEW.ID_COMPARTIMENTO AND ID_PRODUTO = :NEW.ID_PRODUTO;
+    SELECT SUM(STOCK) INTO QUANTIDADE FROM COMPARTIMENTO WHERE ID_MAQUINA = IDMAQUINA;
+    IF(QUANTIDADE = 0) THEN
+        UPDATE MAQUINA SET ESTADO_ATUAL = 'SEM STOCK' WHERE ID_MAQUINA = IDMAQUINA;
+    END IF;
+EXCEPTION
+    WHEN SEM_STOCK_PARA_VENDER THEN -- opcioal, caso não exista quantidade suficiente no compartimento para vender o produto
+        RAISE_APPLICATION_ERROR(-20814, 'O compartimento não possui stock suficiente para vender.');
+END;
+/
+
+
+
+CREATE OR REPLACE TRIGGER ABASTECE
+BEFORE INSERT
+ON REABASTECIMENTO_COMPARTIMENTO
+FOR EACH ROW
+DECLARE
+    STOCK_ATUAL NUMBER; MAXIMO NUMBER;
+    QUANT_INVALIDA EXCEPTION;
+BEGIN
+    SELECT STOCK, CAPAC_MAX INTO STOCK_ATUAL, MAXIMO FROM COMPARTIMENTO WHERE ID_COMPARTIMENTO = :NEW.ID_COMPARTIMENTO AND ID_PRODUTO = :NEW.ID_PRODUTO;
+    
+    IF(:NEW.QUANTIDADE_REPOSTA > MAXIMO-STOCK_ATUAL OR :NEW.QUANTIDADE_REPOSTA <= 0) THEN -- chekar se a quantidade é possivel
+        --:NEW.QUANTIDADE_REPOSTA := MAXIMO-STOCK_ATUAL;
+        RAISE QUANT_INVALIDA;
+    END IF;
+EXCEPTION
+    WHEN QUANT_INVALIDA THEN -- impede abastecimento com quantidade inválida (negativa ou excede capacidade)
+        RAISE_APPLICATION_ERROR(-20813, 'Quantidade inválida.');
+END;
+/
+
+
+CREATE OR REPLACE TRIGGER UPDATE_VIAGEM
+BEFORE INSERT -- before para trocar a quantidade caso esteja incorreta
+ON REABASTECIMENTO_COMPARTIMENTO
+FOR EACH ROW
+DECLARE
+    IDVIAGEM NUMBER;
+    QUANT_DISPONIVEL NUMBER;
+BEGIN
+    SELECT ID_VIAGEM INTO IDVIAGEM FROM VISITA_MAQUINA WHERE ID_VISITA_MAQUINA = :NEW.ID_VISITA_MAQUINA;
+    SELECT QUANTIDADE INTO QUANT_DISPONIVEL FROM PRODUTOS_TRANSPORTADOS WHERE ID_PRODUTO = :NEW.ID_PRODUTO AND ID_VIAGEM = IDVIAGEM;
+
+    IF(:NEW.QUANTIDADE_REPOSTA > QUANT_DISPONIVEL) THEN -- chekar se a quantidade é possivel
+        :NEW.QUANTIDADE_REPOSTA := QUANT_DISPONIVEL;
+    END IF;
+    
+    UPDATE PRODUTOS_TRANSPORTADOS SET QUANTIDADE = QUANTIDADE - :NEW.QUANTIDADE_REPOSTA WHERE ID_PRODUTO = :NEW.ID_PRODUTO AND ID_VIAGEM = IDVIAGEM;
+END;
+/
+
+
+
+
+CREATE OR REPLACE FUNCTION DISTANCIA_LINEAR(LAT1  NUMBER,LON1  NUMBER,LAT2  NUMBER,LON2  NUMBER) 
+RETURN NUMBER
+IS
+    R NUMBER := 6371; -- Raio da Terra em Kms
+    PI CONSTANT NUMBER := 3.141592653589793;
+    D_LAT NUMBER ;
+    D_LON NUMBER ;
+    A NUMBER ;
+    D NUMBER ;
+BEGIN
+    D_LAT := (LAT2 - LAT1) * PI / 180;
+    D_LON := (LON2 - LON1) * PI / 180;
+    A := SIN(D_LAT/2) * SIN(D_LAT/2) + COS(LAT1*PI/180) * COS(LAT2*PI/180) * SIN(D_LON/2) * SIN(D_LON/2);
+    D := R * (2 * ATAN2(SQRT(A), SQRT(1 - A)));
+    RETURN ROUND(D,3);
+END;
+/
+
+
+
+
+----- Pedro -----
+
+CREATE OR REPLACE FUNCTION P_FUNC_2023146226 (LAT_REF NUMBER, LON_REF NUMBER, DATA_INICIO DATE, DATA_FIM DATE)
+RETURN NUMBER
+IS
+    ID_MAIS_PROXIMA NUMBER;
+    ID_PRODUTO_FINAL NUMBER;
+BEGIN                       
+    -- encontra a maquina mais próxima
+    SELECT ID_MAQUINA INTO ID_MAIS_PROXIMA
+    FROM (
+        SELECT ID_MAQUINA, DISTANCIA_LINEAR(LAT_REF, LON_REF, LATITUDE, LONGITUDE) AS DIST
+        FROM MAQUINA
+        WHERE LOWER(ESTADO_ATUAL) = 'operacional'
+        ORDER BY DIST ASC
+    )
+    WHERE ROWNUM = 1;
+    
+    -- encontra o produto mais reabastecido nessa maquina no intervalo de tempo
+    SELECT ID_PRODUTO INTO ID_PRODUTO_FINAL
+    FROM (
+        SELECT RC.ID_PRODUTO, SUM(RC.QUANTIDADE_REPOSTA) AS TOTAL
+        FROM REABASTECIMENTO_COMPARTIMENTO RC, COMPARTIMENTO C 
+        WHERE RC.ID_COMPARTIMENTO = C.ID_COMPARTIMENTO
+        AND C.ID_MAQUINA = ID_MAIS_PROXIMA
+        AND RC.DATA_HORA BETWEEN DATA_INICIO AND DATA_FIM
+        GROUP BY RC.ID_PRODUTO
+        ORDER BY TOTAL DESC
+    )
+    WHERE ROWNUM = 1;
+    
+    RETURN ID_PRODUTO_FINAL;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RETURN NULL;
+END;
+/
+
+
+
+
+CREATE OR REPLACE PROCEDURE Q_PROC_2023146226 (CATEGORIAA VARCHAR2, PERCENTAGEM NUMBER)
+IS
+    MEDIA_PRECO NUMBER;
+BEGIN
+    SELECT AVG(PRECO) INTO MEDIA_PRECO
+    FROM PRODUTO 
+    WHERE LOWER(CATEGORIA) = LOWER(CATEGORIAA);
+    
+    -- Atualiza precos abaixo da media com base na percentagem, por ordem crescente de preco
+    FOR PROD IN (
+        SELECT ID_PRODUTO
+        FROM PRODUTO
+        WHERE LOWER(CATEGORIA) = LOWER(CATEGORIAA)
+          AND PRECO < MEDIA_PRECO
+        ORDER BY PRECO ASC
+    ) LOOP
+        UPDATE PRODUTO
+        SET PRECO = PRECO + (PRECO * PERCENTAGEM / 100)
+        WHERE ID_PRODUTO = PROD.ID_PRODUTO;
+    END LOOP;
+      
+    COMMIT;
+END;
+/
+
+
+
+
+CREATE OR REPLACE TRIGGER R_TRIG_2023146226
+BEFORE INSERT ON REABASTECIMENTO_COMPARTIMENTO
+FOR EACH ROW
+DECLARE
+    STOCK_ATUAL NUMBER;
+    CAPACIDADE_MAX NUMBER;
+BEGIN
+    -- Vai buscar o stock atual e capacidade máxima
+    SELECT STOCK, CAPAC_MAX INTO STOCK_ATUAL, CAPACIDADE_MAX
+    FROM COMPARTIMENTO
+    WHERE ID_COMPARTIMENTO = :NEW.ID_COMPARTIMENTO
+    AND ID_PRODUTO = :NEW.ID_PRODUTO;
+    
+    IF (:NEW.QUANTIDADE_REPOSTA + STOCK_ATUAL > CAPACIDADE_MAX) THEN
+        RAISE_APPLICATION_ERROR(-20815, 'Reabastecimento excede a capacidade máxima do compartimento.');
+    END IF;
+END;
+/
+
+
+
+
+----- Lucas -----
+
+-- Recebe como parâmetro de entrada o número de dias para alerta (dias_alerta)
+create or replace procedure Q_PROC_2023140728 (dias_alerta in number)
+is
+    -- cursor que seleciona produtos com validade próxima ou expirada
+    cursor c1 is 
+        select p.nome, c.data_validade, m.id_maquina, m.local, m.cidade
+        from compartimento c
+        join produto p on c.id_produto = p.id_produto
+        join maquina m on m.id_maquina = c.id_maquina
+        where c.data_validade <= SYSDATE + dias_alerta
+        and c.stock > 0 -- só considera produtos com stock
+        order by c.data_validade; -- mais próximos primeiro
+
+        total number := 0; -- número total de produtos em alerta
+begin
+    for R in c1
+    loop
+        total := total + 1; -- contador de produtos encontrados
+        -- produto vencido
+        if R.data_validade < SYSDATE then
+            DBMS_OUTPUT.PUT_LINE('VENCIDO -> Produto: ' || R.nome || ' | Validade: ' || TO_CHAR(R.data_validade, 'DD-MM-YYYY') || ' | Maquina: ' || R.id_maquina || ' | Local: ' || R.local || ' | Cidade: ' || R.cidade);
+        else 
+            -- prestes a vencer
+            DBMS_OUTPUT.PUT_LINE('PRESTES A VENCER -> Produto: ' || R.nome || ' | Validade: ' || TO_CHAR(R.data_validade, 'DD-MM-YYYY') || ' | Maquina: ' || R.id_maquina || ' | Local: ' || R.local || ' | Cidade: ' || R.cidade);
+        end if;
+    end loop;
+    -- total de produtos encontrados com alerta de validade
+    DBMS_OUTPUT.PUT_LINE('Total de produtos (em stock): ' || total);
+end;
+/
+
+create or replace trigger R_TRIG_2023140728
+-- antes de cada inserção na tabela 'vendas'
+before insert on vendas
+-- para cada linha afetada (linha a linha)
+for each row
+declare 
+    stock_num number;  -- quantidade de stock do compartimento
+    validade date;      -- data de validade do produto no determinado compartimento
+begin
+    -- Vai buscar o stock e a data de validade do compartimento correspondente ao da nova venda
+    select stock, data_validade into stock_num, validade
+    from compartimento 
+    where id_compartimento = :NEW.id_compartimento;
+    
+    -- Verifica se o stock é zero
+    if stock_num = 0 then
+        raise_application_error(-20001, 'ERRO: compartimento vazio! Venda não autorizada.');
+    else 
+        -- Se houver stock, verifica se o produto está fora de validade
+        if validade < SYSDATE then
+            raise_application_error(-20002, 'ERRO: produto vencido! Venda não autorizada.');
+        end if;
+    end if;
+end;
+/
+
+-- Recebe como parâmetro uma categoria (cat) do tipo varchar2
+-- Retorna um cursor (tipo SYS_REFCURSOR)
+create or replace function P_FUNC_2023140728 (cat in varchar2)
+return SYS_REFCURSOR
+IS
+    p_cursor SYS_REFCURSOR; -- Declaração do cursor de saída
+begin
+    open p_cursor for
+        select m.id_maquina, m.local, m.cidade, count(v.id_venda) AS total_vendas
+        from vendas v
+        join produto p on v.id_produto = p.id_produto
+        join compartimento c on c.id_compartimento = v.id_compartimento
+        join maquina m on m.id_maquina = c.id_maquina
+        where upper(p.categoria) = upper(cat)
+        group by m.id_maquina, m.local, m.cidade
+        order by 4 DESC;
+
+    return p_cursor;
+end;
+/
+
+
+
+----- Diogo -----
+
+CREATE OR REPLACE FUNCTION P_FUNC_2023141377 (Vcidade VARCHAR2,Vdata_inicio DATE,Vdata_fim  DATE) 
+RETURN NUMBER
+IS
+    Vid_produto  NUMBER;
+BEGIN
+    SELECT maior.id_produto
+    INTO Vid_produto
+    FROM (                                                                                      
+        SELECT v.id_produto, COUNT(*) AS total_vendas
+        FROM vendas v, compartimento c, maquina m
+        WHERE v.id_compartimento = c.id_compartimento
+          AND c.id_maquina = m.id_maquina
+          AND UPPER(m.cidade) = UPPER(Vcidade)
+          AND v.data_hora BETWEEN Vdata_inicio AND Vdata_fim
+        GROUP BY v.id_produto
+        ORDER BY COUNT(*) DESC
+    ) maior
+    WHERE ROWNUM = 1;
+
+    RETURN Vid_produto;
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Nenhuma venda encontrada no intervalo especificado para a cidade indicada.');
+END;
+/
+
+
+
+CREATE OR REPLACE PROCEDURE Q_PROC_2023141377
+IS
+    CURSOR c1 IS
+        SELECT c.id_compartimento, c.id_maquina
+        FROM compartimento c
+        WHERE (c.stock / c.capac_max) < 0.1;
+BEGIN
+    FOR r IN c1 LOOP
+        INSERT INTO log_estados (id_log_estados,id_maquina, estado_maquina, data_hora)
+        VALUES (seq_log_estados.NEXTVAL ,r.id_maquina, 'Stock Crítico', SYSDATE);
+    END LOOP;
+    COMMIT;
+END;
+/
+
+
+
+CREATE OR REPLACE TRIGGER R_TRIG_2023141377
+BEFORE INSERT ON VEICULO
+FOR EACH ROW
+DECLARE
+    v_ocupacao_atual NUMBER := 0;
+    v_capacidade_max NUMBER := 0;
+BEGIN
+    SELECT g.CAPAC_MAX
+    INTO v_capacidade_max
+    FROM GARAGEM g
+    WHERE g.ID_GARAGEM = :NEW.ID_GARAGEM;
+
+    SELECT COUNT(*)
+    INTO v_ocupacao_atual
+    FROM VEICULO
+    WHERE ID_GARAGEM = :NEW.ID_GARAGEM;
+
+    IF v_ocupacao_atual >= v_capacidade_max THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Capacidade máxima da garagem atingida. Não é possível inserir mais veículos.');
+    END IF;
+
+END;
+/

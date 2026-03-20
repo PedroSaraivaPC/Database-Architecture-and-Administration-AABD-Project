@@ -1,0 +1,39 @@
+Cria-me 2 views para a base de dados enviada em anexo.
+Uma com obrigatoreamente pelo menos um group by e outro com obrigatoreamente pelo menos 1 select encadeado e que considere relevante, justificando a sua relevância. A relevância e o grau de complexidade das mesmas influenciarão fortemente a sua avaliação.
+Uma das views pode ser por exemplo: as 5 maquinas que geraram mais receita nos ultimos 3 meses, bem como a categoria do produto dessas 5 maquinas que mais vendeu de forma a ter as localizacoes que mais geram receitas (relevante para no futuro meter mais maquinas nessa zona) e de forma a ter o tipo de produtos que mais foi vendido (relevante para no futuro meter mais desse tipo de produtos nas maquinas)
+
+
+1a view (com pelo menos um group by): Select das 2 máquinas que geraram maior receita nos últimos três meses, bem como a categoria de produto mais vendida nessas mesmas máquinas. O objetivo é identificar as localizações que apresentaram maior rentabilidade, permitindo uma melhor estratégia de distribuição de novas máquinas no futuro (implementar mais máquinas nessa localização de forma a lucrar mais), e determinar a categoria de produtos com maior procura, de forma a otimizar o seu abastecimento e por consequente a sua venda (implementar categorias de produtos mais lucrativos nas máquinas de forma a lucrar mais), sendo relevante para no futuro lucrar mais com as localizações estudadas, bem como as categorias de produto estudadas.
+
+
+CREATE VIEW VIEW_J_2023146226 AS 
+SELECT
+
+
+
+
+------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/------/
+
+
+2a view (com pelo menos um select encadeado): Select que permite identificar o estado de reabastecimento dos armazéns: reabastecimento urgente (e de que produto), reabastecimento recomendado, e Stock suficiente, comparando o stock atual com a quantidade vendida nos últimos 30 dias. Ajuda na otimização logística, reduzindo desperdícios e melhorando a distribuição dos produtos. É relevante para gerir ao pormenor o stock dos produtos armazenados nos armazéns.
+
+Explicação da Query:
+Subquery vendas_rec: Calcula a quantidade vendida nos últimos 30 dias.
+Subquery estoque_atual: Obtém o estoque atual de cada produto no armazém.
+Subquery reabastecimentos_rec: Obtém a média de reabastecimento por produto.
+Query principal:
+Junta as três subqueries para comparar estoque vs. vendas.
+Cria um indicador de reabastecimento:
+"Reabastecimento Urgente" → Se o estoque for inferior a 120% das vendas mensais.
+"Reabastecimento Recomendado" → Se for inferior a 150%.
+"Estoque Suficiente" → Caso contrário.
+
+Benefícios e Desafios:
+✅ Alta complexidade: Subqueries encadeadas, agregações e comparações dinâmicas.
+✅ Alta relevância: Otimiza a gestão de inventário e reduz faltas de stock.
+✅ Escalabilidade: Pode ser adaptada para incluir sazonalidade ou previsão estatística.
+
+
+CREATE VIEW VIEW_K_2023146226 AS 
+SELECT
+
